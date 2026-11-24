@@ -23,6 +23,8 @@ internal sealed class TejConfiguration
 
     internal string WatchlistPath { get; } = Path.GetFullPath(
         Environment.GetEnvironmentVariable("TEJ_WATCHLIST_FILE") ?? Path.Combine(UserDataDirectory, "watchlists.json"));
+    internal string ReportDirectory { get; } = Path.GetFullPath(
+        Environment.GetEnvironmentVariable("TEJ_REPORT_DIR") ?? Path.Combine(UserDataDirectory, "reports"));
 
     private string SettingsPath => Path.Combine(InstallRoot, "CommonFolder", "TejCommonSetting", "CustomerSetting_pro.ini");
 

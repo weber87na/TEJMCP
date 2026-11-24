@@ -1,13 +1,16 @@
 using System;
 using System.ComponentModel;
+using System.Globalization;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace TejMcp;
 
-internal sealed class TejTools(TejClient client, CsvExport export, TejWatchlists watchlists)
+internal sealed class TejTools(TejClient client, CsvExport export, TejWatchlists watchlists, TejSavedReports savedReports)
 {
     private readonly TejWorkflows workflows = new(client);
+    private readonly TejReports reports = new(client);
+    private readonly TejEventStudy eventStudy = new(client);
 
     [McpServerTool(Name = "tej_status", ReadOnly = true, OpenWorld = false)]
     [Description("檢查本機 TEJ Pro 用戶端組件與憑證設定。這個工具不會登入或查資料。")]
@@ -27,6 +30,167 @@ internal sealed class TejTools(TejClient client, CsvExport export, TejWatchlists
         [Description("tej_search_tables 傳回的 tableId。 ")] string tableId,
         [Description("兩碼市場代碼，預設 TW。 ")] string country = "TW") =>
         Run(() => client.Describe(tableId, country));
+
+    [McpServerTool(Name = "tej_search_fields", ReadOnly = true, OpenWorld = true)]
+    [Description("按欄位名稱或代碼跨表搜尋已授權欄位。在關鍵字前加 # 可改搜資料表名稱或代碼。")]
+    public TejFieldMatch[] SearchFields(
+        [Description("欄位關鍵字，例如 EPS、股利，或 #股價。指定 tableId 時可傳空字串。")] string keyword,
+        [Description("兩碼市場代碼，預設 TW。")] string country = "TW",
+        [Description("選填的 TEJ 資料表代碼。")] string? tableId = null,
+        [Description("最多回傳 1–200 個欄位。")] int limit = 50) =>
+        Run(() => client.SearchFields(keyword, country, tableId, limit));
+
+    [McpServerTool(Name = "tej_search_companies", ReadOnly = true, OpenWorld = true)]
+    [Description("依台灣公司的代碼、簡稱、中英文全名、產業分類或上市別找研究樣本，回傳上市及下市日期。")]
+    public TejResult SearchCompanies(
+        [Description("代碼或中英文公司名稱關鍵字。")] string? keyword = null,
+        [Description("TEJ 業別或產業別欄位的關鍵字或代碼。")] string? industry = null,
+        [Description("上市別欄位的關鍵字或代碼。")] string? market = null,
+        [Description("最多回傳 1–200 筆。")] int limit = 50) =>
+        Run(() => reports.Companies(keyword, industry, market, limit));
+
+    [McpServerTool(Name = "tej_query_periods", ReadOnly = true, OpenWorld = true)]
+    [Description("以指定日期、最近期或週期彙整查詢 TEJ。公司主檔可省略日期，新聞等資料會一併回傳附加主鍵。")]
+    public TejResult QueryPeriods(
+        [Description("TEJ 資料表代碼。")] string tableId,
+        [Description("選填的代碼陣列。和 watchlistName 擇一。")] string[]? codes = null,
+        [Description("選填的本機觀察清單。省略清單與代碼時使用預設清單。")] string? watchlistName = null,
+        [Description("選填的起始日 YYYY-MM-DD。")] string? startDate = null,
+        [Description("選填的結束日 YYYY-MM-DD。")] string? endDate = null,
+        [Description("依輸出順序選擇欄位。")] string[]? fields = null,
+        [Description("指定日期、最近期、排序或週期彙整設定。")] TejQueryOptions? options = null,
+        [Description("兩碼市場代碼，預設 TW。")] string country = "TW",
+        [Description("最多回傳 1–1000 筆。")] int limit = 100) =>
+        Run(() => reports.Query(tableId, SelectStocks(watchlistName, codes).Codes, startDate, endDate, fields, country, options, limit));
+
+    [McpServerTool(Name = "tej_compare_matrix", ReadOnly = true, OpenWorld = true)]
+    [Description("將同家公司跨期或多家公司同一期的資料轉置成比較表，可依數值欄位為公司排序。")]
+    public TejMatrix CompareMatrix(
+        [Description("TEJ 資料表代碼。")] string tableId,
+        [Description("選取的欄位代碼。")] string[] fields,
+        [Description("指定日期陣列 YYYY-MM-DD。跨公司時指定一個日期。")] string[] dates,
+        [Description("代碼陣列。和 watchlistName 擇一。")] string[]? codes = null,
+        [Description("本機觀察清單名稱。")] string? watchlistName = null,
+        [Description("選填的數值欄位代碼，依該欄位排名。")] string? rankField = null,
+        [Description("true 由高到低或由新到舊。")] bool descending = true,
+        [Description("兩碼市場代碼，預設 TW。")] string country = "TW") =>
+        Run(() => reports.Matrix(tableId, SelectStocks(watchlistName, codes).Codes, fields, dates, country, rankField, descending));
+
+    [McpServerTool(Name = "tej_query_panel", ReadOnly = true, OpenWorld = true)]
+    [Description("跨資料表下載，依公司與日期或指定週期合併。可直接提供報表設定，或重跑已儲存的報表。")]
+    public TejResult QueryPanel(
+        [Description("報表或欄位群組設定。與 savedName 擇一。")] TejReportDefinition? report = null,
+        [Description("已儲存的報表名稱。")] string? savedName = null,
+        [Description("覆寫報表起日 YYYY-MM-DD。")] string? startDate = null,
+        [Description("覆寫報表迄日 YYYY-MM-DD。")] string? endDate = null,
+        [Description("最多回傳 1–1000 筆。")] int limit = 100,
+        [Description("改用指定代碼執行報表。與 watchlistName 擇一。")] string[]? codes = null,
+        [Description("改用已儲存的公司觀察清單執行報表。")] string? watchlistName = null) =>
+        Run(() =>
+        {
+            TejClient.CheckLimit(limit, 1000);
+            return ReadPanel(report, savedName, startDate, endDate, limit, codes, watchlistName);
+        });
+
+    [McpServerTool(Name = "tej_report_save", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
+    [Description("儲存本機欄位群組或跨表報表設定，供日後重跑。同名時取代原設定。")]
+    public TejSavedReport SaveReport(
+        [Description("報表或欄位群組名稱。")] string name,
+        [Description("報表定義。只保存欄位群組時可省略日期與代碼。")] TejReportDefinition report) =>
+        Run(() => savedReports.Save(name, report));
+
+    [McpServerTool(Name = "tej_report_list", ReadOnly = true, OpenWorld = false)]
+    [Description("列出本機已儲存的跨表報表和欄位群組。")]
+    public TejSavedReport[] ListReports() => Run(savedReports.List);
+
+    [McpServerTool(Name = "tej_export_data", ReadOnly = false, Destructive = false, OpenWorld = true)]
+    [Description("將單表或跨表報表匯出為 CSV、TXT 或 XLSX。只在使用者要求匯出時使用。")]
+    public CsvResult ExportData(
+        [Description("檔名，可用 .csv、.txt 或 .xlsx。")] string fileName,
+        [Description("報表設定。與 savedName 擇一。")] TejReportDefinition? report = null,
+        [Description("已儲存的報表名稱。")] string? savedName = null,
+        [Description("覆寫報表起日 YYYY-MM-DD。")] string? startDate = null,
+        [Description("覆寫報表迄日 YYYY-MM-DD。")] string? endDate = null,
+        [Description("文字檔選填分隔符號，可用逗號、Tab、直線或分號。")] string? delimiter = null,
+        [Description("選填的空值輸出文字。")] string? nullValue = null,
+        [Description("最多匯出 1–10000 筆。")] int limit = 10_000,
+        [Description("改用指定代碼執行報表。與 watchlistName 擇一。")] string[]? codes = null,
+        [Description("改用已儲存的公司觀察清單執行報表。")] string? watchlistName = null) =>
+        Run(() =>
+        {
+            var destination = export.Destination(fileName, multiFormat: true);
+            return export.Save(destination, ReadPanel(report, savedName, startDate, endDate, limit, codes, watchlistName), delimiter, nullValue);
+        });
+
+    [McpServerTool(Name = "tej_export_chart_png", ReadOnly = false, Destructive = false, OpenWorld = true)]
+    [Description("將一個數值欄位的跨期比較畫成 PNG 折線圖，最多 8 組序列。只在使用者要求產生圖表時使用。")]
+    public CsvResult ExportChart(
+        [Description("輸出的 .png 檔名。")] string fileName,
+        [Description("只選一個來源及一個數值欄位，最多 8 個代碼。")] TejReportDefinition report) =>
+        Run(() =>
+        {
+            var destination = export.Destination(fileName, png: true);
+            var data = ReadPanel(report, null, null, null, 10_000, null, null);
+            export.SaveFile(destination, stream => TejChart.Write(stream, data));
+            return new CsvResult(destination, data.Rows.Length, false);
+        });
+
+    [McpServerTool(Name = "tej_search_events", ReadOnly = true, OpenWorld = true)]
+    [Description("按代碼、日期和關鍵字找 TEJ 歷史金融新聞、股票市場大事記或特定事件，可用於挑選事件樣本。")]
+    public TejResult SearchEvents(
+        [Description("news 查金融大事記，market_memo 查交易所歷史事件，special 查特定事件。")] string dataset,
+        [Description("起始日 YYYY-MM-DD。")] string startDate,
+        [Description("結束日 YYYY-MM-DD。")] string endDate,
+        [Description("選填代碼。news 填公司代碼，market_memo 或 special 填事件類別代碼。")] string[]? codes = null,
+        [Description("標題或內文關鍵字。")] string? keyword = null,
+        [Description("news 設為 true 時也搜尋及回傳新聞內文。")] bool includeBody = false,
+        [Description("special 選擇公告日 announcement 或事件日 occurrence，預設公告日。")] string? dateBasis = null,
+        [Description("最多 1–1000 筆。")] int limit = 50) =>
+        Run(() => reports.Events(dataset, codes, startDate, endDate, keyword, includeBody, dateBasis, limit));
+
+    [McpServerTool(Name = "tej_event_study", ReadOnly = true, OpenWorld = true)]
+    [Description("以自訂台股事件日執行日、週、月事件研究，回傳各樣本估計與異常報酬、累積值、平均及排除原因。")]
+    public TejEventStudyResult EventStudy(
+        [Description("1–30 組事件，每組填入 code 和 date。與 sampleText 擇一。")] TejEvent[]? events = null,
+        [Description("事件期、估計期、模型、基準與缺值設定。")] TejEventOptions? options = null,
+        [Description("CSV/TXT 樣本文字，每列為證券代碼、半形逗號、YYYYMMDD，省略標題列。")] string? sampleText = null) =>
+        Run(() => ReadEvents(events, sampleText, options));
+
+    [McpServerTool(Name = "tej_export_event_study", ReadOnly = false, Destructive = false, OpenWorld = true)]
+    [Description("計算並匯出事件研究結果，支援 CSV、TXT、XLSX。只在使用者要求匯出時使用。")]
+    public CsvResult ExportEventStudy(
+        [Description("輸出的 .csv、.txt 或 .xlsx 檔名。")] string fileName,
+        [Description("periods 為逐期明細、estimates 為估計與排除紀錄、averages 為平均異常值和統計量。")] string view = "periods",
+        [Description("1–30 組事件，每組填入 code 和 date。與 sampleText 擇一。")] TejEvent[]? events = null,
+        [Description("事件期、估計期、模型、基準與缺值設定。")] TejEventOptions? options = null,
+        [Description("CSV/TXT 樣本文字，每列為證券代碼、半形逗號、YYYYMMDD，省略標題列。")] string? sampleText = null) =>
+        Run(() =>
+        {
+            var destination = export.Destination(fileName, multiFormat: true);
+            return export.Save(destination, TejEventStudy.ExportRows(ReadEvents(events, sampleText, options), view));
+        });
+
+    [McpServerTool(Name = "tej_disclosure_links", ReadOnly = true, OpenWorld = false)]
+    [Description("產生台灣上市櫃公司財務報告書及法說會的官方查詢入口。")]
+    public object DisclosureLinks(
+        [Description("台灣證券代碼。")] string code,
+        [Description("西元財報年度。省略時使用台北當前年份。")] int? year = null) =>
+        Run(() =>
+        {
+            var company = TejClient.CompanyCode(code);
+            var fiscalYear = year ?? TejClient.TaipeiToday().Year;
+            if (fiscalYear < 1912 || fiscalYear > TejClient.TaipeiToday().Year)
+                throw new TejException("年度須為 1912 年至今年的西元年份。");
+            var rocYear = (fiscalYear - 1911).ToString(CultureInfo.InvariantCulture);
+            return new
+            {
+                code = company,
+                fiscalYear,
+                financialReportsUrl = $"https://doc.twse.com.tw/server-java/t57sb01?step=1&colorchg=1&co_id={Uri.EscapeDataString(company)}&year={rocYear}&seamon=&mtype=A",
+                investorConferencePortalUrl = "https://mops.twse.com.tw/",
+                investorConferenceMenu = "單一公司 → 營運概況 → 法人說明會一覽表",
+            };
+        });
 
     [McpServerTool(Name = "tej_query", ReadOnly = true, OpenWorld = true)]
     [Description("查詢以公司代碼及日期為主鍵的 TEJ Pro 資料表，回傳欄位定義與依欄位順序排列的資料列。")]
@@ -198,6 +362,33 @@ internal sealed class TejTools(TejClient client, CsvExport export, TejWatchlists
         if (watchlist.Codes.Length == 0)
             throw new TejException($"觀察清單「{watchlist.Name}」還沒有證券。請先新增代碼。");
         return (watchlist.Codes, watchlist.Name);
+    }
+
+    private TejResult ReadPanel(TejReportDefinition? report, string? savedName, string? start, string? end,
+        int limit, string[]? codes, string? watchlistName)
+    {
+        if ((report == null) == (savedName == null))
+            throw new TejException("請在報表設定與已儲存報表名稱擇一。");
+        var definition = report ?? savedReports.Get(savedName!).Definition;
+        definition = definition with { StartDate = start ?? definition.StartDate, EndDate = end ?? definition.EndDate };
+        if (codes != null || watchlistName != null)
+            definition = definition with { Codes = codes, WatchlistName = watchlistName, Industry = null, Market = null };
+        TejReports.ValidateDefinition(definition);
+        if (definition.Industry == null)
+            return reports.Panel(definition, SelectStocks(definition.WatchlistName, definition.Codes).Codes, limit);
+        var sample = reports.Companies(null, definition.Industry, definition.Market, TejReports.MaximumPanelCodes);
+        if (sample.Truncated)
+            throw new TejException("產業樣本超過 200 家。請加上上市別或指定公司代碼。");
+        if (sample.Rows.Length == 0)
+            throw new TejException("找不到符合產業與上市別的公司。");
+        return reports.Panel(definition, Array.ConvertAll(sample.Rows, row => TejReports.Text(row[0])), limit);
+    }
+
+    private TejEventStudyResult ReadEvents(TejEvent[]? events, string? sampleText, TejEventOptions? options)
+    {
+        if ((events == null) == (sampleText == null))
+            throw new TejException("請在事件陣列與 CSV/TXT 樣本文字擇一。");
+        return eventStudy.Run(events ?? TejEventStudy.ReadSamples(sampleText!), options);
     }
 
     private static T Run<T>(Func<T> action)

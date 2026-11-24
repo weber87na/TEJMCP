@@ -294,12 +294,12 @@ internal sealed class TejWorkflows(TejClient client)
     private static bool? Above(decimal? value, decimal threshold) => value is { } number ? number > threshold : null;
 
     // A TWSE closing auction delayed by the exchange may finish at 13:33.
-    private static DateTime LatestCompletedDate(DateTimeOffset taipeiNow) =>
+    internal static DateTime LatestCompletedDate(DateTimeOffset taipeiNow) =>
         taipeiNow.TimeOfDay < LatestRegularClose ? taipeiNow.Date.AddDays(-1) : taipeiNow.Date;
 
     private static DateTime Lookback(DateTime end, int days) => end.AddDays(-Math.Min(days, (end - DateTime.MinValue).Days));
 
-    private static string IsoDate(DateTime value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    internal static string IsoDate(DateTime value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static string[] Missing(string[] codes, object?[][] rows)
     {

@@ -36,7 +36,7 @@ internal static class Program
                 builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
                 builder.Logging.SetMinimumLevel(LogLevel.Warning);
                 builder.Services.AddMcpServer().WithStdioServerTransport()
-                    .WithTools(new TejTools(client, export, new TejWatchlists(configuration)));
+                    .WithTools(new TejTools(client, export, new TejWatchlists(configuration), new TejSavedReports(configuration)));
                 using var host = builder.Build();
                 await host.RunAsync().ConfigureAwait(false);
                 return 0;

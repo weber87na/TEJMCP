@@ -53,6 +53,54 @@ codex mcp add tej-pro -- D:\TEJMCP\bin\Release\net48\TejMcp.exe mcp
 
 查詢支援單一實體資料表且主鍵為 `COID`、`MDATE` 的資料，預設市場為 `TW`。公司代碼請保留前導零。月、季、半年與年資料依該表週期篩選。回傳的 `truncated` 表示結果超過指定上限，可縮小區間後再查。
 
+## TEJ Pro 操作手冊對照
+
+| 手冊內容 | 對應的 MCP 功能 |
+| --- | --- |
+| 智能搜尋（第 19 頁） | `tej_search_fields` 按欄名或欄位代碼跨表搜尋，也接受 `#資料表關鍵字`。`tej_search_tables`、`tej_list_fields` 可接續查看已授權的表與欄位。 |
+| 個股、多股比較及轉置（第 8–9、29 頁） | `tej_query_periods` 取得公司與日期明細。 `tej_compare_matrix` 將單股跨期或同一期多股轉置，並可按選定的數值欄位排名。 |
+| 公司樣本與欄位群組（第 10–11、24–25 頁） | `tej_search_companies` 支援代碼、簡稱、全名、產業與上市別。以 `tej_watchlist_add` 留存固定名單，以報表的 `industry` 重新選取當下產業樣本。`tej_report_save` 和 `tej_report_list` 保存及列出欄位群組或完整報表設定。 |
+| 指定日期、最近期、升降冪及頻率（第 12–14、26–27 頁） | `tej_query_periods` 支援單日、多日、區間、最近 N 期、齊頭與非齊頭，以及週、月、季、年彙整。可查公司主檔及含附加主鍵的單一實體表。 |
+| 跨資料庫下載與格式設定（第 30–35 頁） | `tej_query_panel` 以公司與期間合併多表，可按來源選擇聚合方式，支援直接傳設定或重跑已存報表。 |
+| 繪圖與匯出（第 15–17、47 頁） | `tej_export_data` 匯出 CSV、TXT、XLSX。`tej_export_chart_png` 畫單一數值欄位的時間序列。`tej_export_event_study` 匯出逐期明細、估計與排除紀錄，或平均異常報酬。 |
+| 財務報告書與法說會（第 18 頁） | `tej_disclosure_links` 產生財報年度查詢連結與公開資訊觀測站法說會入口。 |
+| 事件日挑選與計算（第 36–47 頁） | `tej_search_events` 查歷史金融新聞、特定事件及股票市場大事記。`tej_event_study` 接受自訂事件或 CSV／TXT 樣本文字，回傳異常報酬、累計值與排除原因。 |
+
+手冊中的安裝與帳號認證由 TEJ 照原流程辦理。Excel 外掛的「小 a」、儲存格連動、巨集與活頁簿更新屬於桌面外掛功能。本機 MCP 的對應操作是重跑已儲存的報表設定，再輸出到新檔。既有 Codex 連線可在重新連線或開啟新工作階段後載入新增工具。
+
+### 日期、跨表與匯出口徑
+
+- `tej_query_periods` 的 `options.dates` 接受最多 100 個 `YYYY-MM-DD`。日、週資料按實際日期鍵比對，月、季、半年資料按月份鍵比對，年資料按年比對。 `options.latest` 接受 1–100。設 `aligned: true` 時先從選定公司集合取共同的日期清單，再回傳各公司在這組日期已有的列。省略時，各公司獨立取最近期。
+- 週、月、季、年彙整使用曆週（週一開始）、曆月、曆季及曆年。 `first` 和 `last` 取期內第一列或最後一列。 `mean` 和 `sum` 只接受數值欄位，略過個別缺值，整期缺值時保留空白。起訖日在期中時，僅使用所查區間內的資料。
+- 跨表報表最多 8 張表、200 個代碼，每張表可選 30 個欄位。 `exact` 依實際日期或期間標籤合併，其他週期先分表彙整再合併。保留任一來源有資料的公司及期間，未匹配留空。欄位以 `表代碼.欄位代碼` 命名。每張表最多讀取 10,000 筆原始列，超過時請縮短區間或減少公司。按期間合併使用查詢當下的資料，公告時點研究需另選公告日欄位並檢查版本。
+- 已儲存的設定預設在 `%LOCALAPPDATA%\TEJ-MCP\reports`，可用 `TEJ_REPORT_DIR` 調整。重跑時可覆寫日期及公司樣本。動態產業樣本使用目前 TEJ 主檔的產業分類。歷史研究可根據主檔上市與下市日期挑選固定樣本。
+- `tej_export_data` 的 CSV 及 TXT 有 UTF-8 BOM，可調分隔符和空值文字。XLSX 保留代碼前導零，數字儲存為數值。匯出路徑沿用 `TEJ_EXPORT_DIR`，同名檔會保留。
+
+> 比較 2330 與 2317 在 2026 年 8 到 10 月的月營收及每月最後一筆調整收盤價，對齊月份，匯出成「營收與收盤價.xlsx」。
+
+`tej_query_panel` 的 `report` 範例，可直接用於 `tej_export_data`：
+
+```json
+{
+  "sources": [
+    { "tableId": "WSALE", "fields": ["D0001", "D0003"] },
+    { "tableId": "WAPRCD1", "fields": ["CLOSE"], "aggregation": "last" }
+  ],
+  "codes": ["2330", "2317"],
+  "startDate": "2026-08-01",
+  "endDate": "2026-10-31",
+  "period": "month"
+}
+```
+
+### 事件研究
+
+- `tej_search_events` 可查 `news`（`WNEWS`）、`market_memo`（`WMEMO`）或 `special`（`WMKTEVT`）。新聞按公司代碼，後兩項按事件類別代碼。省略代碼可探索資料來源。 `special` 可用 `dateBasis` 選擇公告日 `announcement` 或事件日 `occurrence`。新聞和大事記的涵蓋日期依 TEJ 資料表而定。
+- `tej_event_study` 支援台股日、週、月頻率，使用 TEJ 除權息調整表的簡單報酬率 `ROI`、連續複利報酬率 `ROIB` 或週轉率 `TURNOVER`。週、月採已完成的期間，並以實際期末交易日配對個股與基準。休市事件日預設移至下一個台灣交易日，也可設定排除。
+- 預期模式可用平均調整 `mean_adjusted`、市場指數調整 `market_adjusted` 或單一基準 OLS `market_ols`。市場模式預設使用 `Y9999`。事件期個股缺值預設排除，也可指定補零並標記。基準缺值時排除。輸出包含 AR、CAR、AAR、CAAR、每日／每期橫斷面 t 值、估計樣本數及排除原因。t 值以同一相對期間的樣本標準差計算，需自行評估重疊事件及樣本相依性。GARCH 及 Scholes–Williams 模型仍可在原廠事件研究系統中使用。 [TEJ 事件研究技術手冊](https://www.tejwin.com/wp-content/uploads/TEJ%E4%BA%8B%E4%BB%B6%E7%A0%94%E7%A9%B6%E7%B3%BB%E7%B5%B1%E6%8A%80%E8%A1%93%E6%89%8B%E5%86%8A.pdf)
+
+> 以 2026 年 11 月 4 日為 2330 與 2317 的事件日，用加權指數做市場模型，列出事件日前後各 3 個交易日的異常報酬與累積異常報酬。
+
 ## 已實作的台股應用
 
 下列工具可直接透過自然語言呼叫。可用公司、資料期間和欄位依你的 TEJ 授權而定。
